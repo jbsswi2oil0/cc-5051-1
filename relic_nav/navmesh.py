@@ -81,12 +81,30 @@ class RectNode:
 
 
 class NavMesh:
-    def __init__(self, level, spec, cell_size=0.1):
+    def __init__(self, level, spec, cell_size=0.1, erosion_margin=0.0,
+                 verify_margin=None):
         self.level = level
         self.spec = spec
         self.cs = cell_size
+        # extra clearance added on top of the character radius when eroding the
+        # walkable surface. Positive keeps the planner further from solids;
+        # negative is how a one-cell-short erosion fault is expressed without
+        # touching the capsule verification radius.
+        self.erosion_margin = float(erosion_margin)
+        # extra clearance the planner's own corner verification adds on top of
+        # the body radius. A one-cell-short surface reaches past the eroded
+        # boundary, so a planner that trusts it must also verify corners at the
+        # same short radius; otherwise the fault is silently repaired by the
+        # capsule check and never reaches the emitted route.
+        if verify_margin is None:
+            verify_margin = self.erosion_margin
+        self.verify_margin = float(verify_margin)
         self.report = BuildReport()
         self._build()
+
+    @property
+    def verify_radius(self):
+        return self.spec.radius + self.verify_margin
 
     # ------------------------------------------------------------ 1. rasterise
     def _build(self):
@@ -239,8 +257,9 @@ class NavMesh:
                 dist[i] = best
 
         walkable = [False] * (nx * ny)
+        erode = spec.radius + self.erosion_margin
         for i in range(nx * ny):
-            if not blocked[i] and dist[i] + 1e-12 >= spec.radius:
+            if not blocked[i] and dist[i] + 1e-12 >= erode:
                 walkable[i] = True
         rep.walkable_cells = sum(walkable)
         rep.eroded_cells = rep.surface_cells - rep.steep_cells - rep.wall_cells - rep.walkable_cells
@@ -509,7 +528,7 @@ class NavMesh:
         # corner capsule verification against the exact solids
         fallback = False
         for a, b in zip(poly, poly[1:]):
-            if not path_clears_corner(a, b, self.solids, self.spec.radius):
+            if not path_clears_corner(a, b, self.solids, self.verify_radius):
                 fallback = True
                 break
         if fallback:
@@ -533,7 +552,7 @@ class NavMesh:
         boundary. From each anchor the furthest reachable candidate with a
         radius-clear capsule becomes the next anchor; every emitted segment is
         independently proven collision-free."""
-        r = self.spec.radius
+        r = self.verify_radius
 
         def standable(p):
             cell = self.cell_at(p)

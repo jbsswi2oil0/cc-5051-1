@@ -171,6 +171,40 @@ def failure_stage(result):
     return "none"
 
 
+def deliver_reductions(out_dir="artifacts", cell_size=0.1):
+    """Run the automatic reducer on both injected faults plus the marginal
+    sampling-layout probe, write the reduction reports, the loadable sample
+    catalog and the level-view panels."""
+    from relic_nav.scene import GateScenario, RadiusMisread, ErosionShortfall
+    from relic_nav.reducer import (
+        reduce_failure, phase_probe_fault,
+    )
+    from relic_nav.view import deliver_view
+
+    scn = GateScenario()
+    reductions = []
+    reduced_by_id = {}
+    # sample id matches view.catalog(): the two literal faults, then the
+    # marginal erosion that exercises the sampling-layout branch of the report
+    probes = [("radius_misread", RadiusMisread(0.15)),
+              ("erosion_shortfall", ErosionShortfall(1.0)),
+              ("erosion_phase", phase_probe_fault())]
+    for sid, fault in probes:
+        red = reduce_failure(scn, fault, cell_size=cell_size, steps_per_axis=5)
+        reductions.append(red.as_dict())
+        reduced_by_id[sid] = red.reduced
+        print(f"reduce {fault.name:20s} corner={red.corner:10s} "
+              f"kind={red.base_diagnosis.get('kind')} "
+              f"w={red.reduced.door_width:.3f} r={red.reduced.radius:.3f} "
+              f"gap={red.reduced.ramp_gap:.3f}")
+    # the view loads exactly the geometry the reducer kept, so the delivered
+    # panels show the shrunken sample rather than the unreduced reference
+    view_index = deliver_view(out_dir=out_dir, cell_size=cell_size,
+                              reduced_by_id=reduced_by_id)
+    return {"reductions": reductions, "view": view_index,
+            "cell_size": cell_size}
+
+
 def deliver(out_dir="artifacts", cell_size=0.1):
     os.makedirs(out_dir, exist_ok=True)
     level = make_ruin_level()
@@ -244,6 +278,10 @@ def deliver(out_dir="artifacts", cell_size=0.1):
     with open(os.path.join(out_dir, "report.json"), "w") as f:
         json.dump(summary, f, indent=2)
     print("report ->", os.path.join(out_dir, "report.json"))
+    # automatic minimisation of failing gate samples + level-view artifacts
+    summary["reductions"] = deliver_reductions(out_dir, cell_size)
+    with open(os.path.join(out_dir, "report.json"), "w") as f:
+        json.dump(summary, f, indent=2)
     return summary
 
 
